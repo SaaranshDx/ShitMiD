@@ -38,3 +38,21 @@ curl http://localhost:8000/auth/verify \\
 ```
 
 A valid token returns `authenticated: true` and the saved user profile. Invalid or expired tokens return `401`. The token is stored as a hash in `db/usr`, and the raw token is not saved.
+
+## WebSocket sessions
+
+Connect to the WebSocket endpoint with the session token:
+
+```js
+const socket = new WebSocket(
+  `ws://localhost:8000/ws?token=${encodeURIComponent(sessionToken)}`,
+);
+```
+
+A successful connection sends a `session_started` message containing the random 12-character `sessionId`. Each connection is recorded in:
+
+```text
+db/usr/<user-id>/<session-id>.json
+```
+
+The session file is created when the WebSocket connects and updated when it closes with `connectedAt`, `disconnectedAt`, `durationMs`, `closeCode`, and `closeReason` fields. Session files are ignored by Git through the existing `db/` rule.
