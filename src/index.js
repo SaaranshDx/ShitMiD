@@ -3,6 +3,8 @@ const express = require(`express`);
 const { URLSearchParams } = require(`url`);
 const { randomBytes } = require(`crypto`);
 const axios = require(`axios`);
+const fs = require(`node:fs/promises`);
+const path = require(`node:path`);
 
 const port = process.env.PORT || 8000;
 const clientId = process.env.CLIENTID;
@@ -116,16 +118,50 @@ app.get(`/auth/discord/redirect`, async (req, res) => {
       },
     );
 
+    const user = userResponse.data;
+    const avatarUrl = user.avatar
+      ? `https://cdn.discordapp.com/avatars/${user.id}/${encodeURIComponent(user.avatar)}.webp?size=4096`
+      : null;
+
+    try {
+      await saveUserData(
+        tokenResponse.data.refresh_token,
+        tokenResponse.data.access_token,
+        user.id,
+        user.username,
+        avatarUrl,
+      );
+    } catch (error) {
+      console.error(`Failed to save Discord user:`, error.message);
+      return res.status(500).send(`Failed to save Discord user`);
+    }
+
     // Do not log or return the access token.
     return res.json({
       message: `Discord authorization successful`,
-      user: userResponse.data,
+      user,
     });
   } catch (error) {
     console.error(`Discord user lookup failed:`, error.message);
     return res.status(502).send(`Discord user lookup failed`);
   }
 });
+
+const sToken =
+
+async function saveUserData(refreshToken, accessToken, userId, username, avatar, sToken) {
+  const userDirectory = path.join(__dirname, `..`, `db`, `usr`);
+  const userPath = path.join(userDirectory, `${userId}.json`);
+  const data = {
+    rToken: refreshToken,
+    aToken: accessToken,
+    username,
+    avatar,
+  };
+
+  await fs.mkdir(userDirectory, { recursive: true });
+  await fs.writeFile(userPath, JSON.stringify(data, null, 2), `utf8`);
+}
 
 app.listen(port, () => {
   console.log(`Server listening on http://localhost:${port}`);
