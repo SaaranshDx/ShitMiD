@@ -1,10 +1,11 @@
 require(`dotenv`).config();
 const express = require(`express`);
 const { URLSearchParams } = require(`url`);
-const { randomBytes } = require(`crypto`);
+const { createHash, randomBytes, timingSafeEqual } = require(`crypto`);
 const axios = require(`axios`);
 const fs = require(`node:fs/promises`);
 const path = require(`node:path`);
+require('crypto');
 
 const port = process.env.PORT || 8000;
 const clientId = process.env.CLIENTID;
@@ -16,6 +17,7 @@ const scope =
   process.env.DISCORD_SCOPE ||
   `guilds.join rpc.video.read rpc.screenshare.write rpc.video.write rpc.activities.write rpc.voice.write rpc.screenshare.read identify rpc.voice.read rpc.notifications.read rpc`;
 const stateLifetime = 10 * 60 * 1000;
+const sessionLifetime = 7 * 24 * 60 * 60 * 1000;
 const pendingStates = new Map();
 const app = express();
 
@@ -122,6 +124,7 @@ app.get(`/auth/discord/redirect`, async (req, res) => {
     const avatarUrl = user.avatar
       ? `https://cdn.discordapp.com/avatars/${user.id}/${encodeURIComponent(user.avatar)}.webp?size=4096`
       : null;
+    const sessionToken = createSessionToken(user.id);
 
     try {
       await saveUserData(
@@ -130,6 +133,7 @@ app.get(`/auth/discord/redirect`, async (req, res) => {
         user.id,
         user.username,
         avatarUrl,
+        sessionToken,
       );
     } catch (error) {
       console.error(`Failed to save Discord user:`, error.message);
@@ -139,6 +143,7 @@ app.get(`/auth/discord/redirect`, async (req, res) => {
     // Do not log or return the access token.
     return res.json({
       message: `Discord authorization successful`,
+      token: sessionToken,
       user,
     });
   } catch (error) {
@@ -147,9 +152,88 @@ app.get(`/auth/discord/redirect`, async (req, res) => {
   }
 });
 
-const sToken =
+function createSessionToken(userId) {
+  return `${userId}.${randomBytes(32).toString(`base64url`)}`;
+}
 
-async function saveUserData(refreshToken, accessToken, userId, username, avatar, sToken) {
+function hashSessionToken(token) {
+  return createHash(`sha256`).update(token).digest(`hex`);
+}
+
+function getBearerToken(req) {
+  const authorization = req.get(`authorization`);
+
+  if (!authorization?.startsWith(`Bearer `)) {
+    return null;
+  }
+
+  const token = authorization.slice(`Bearer `.length).trim();
+  return token || null;
+}
+
+async function verifyUserToken(token) {
+  if (typeof token !== `string`) {
+    return null;
+  }
+
+  const separator = token.indexOf(`.`);
+  const userId = separator === -1 ? null : token.slice(0, separator);
+  const tokenSecret = separator === -1 ? null : token.slice(separator + 1);
+
+  if (!/^\d+$/.test(userId || ``) || !tokenSecret) {
+    return null;
+  }
+
+  const userPath = path.join(__dirname, `..`, `db`, `usr`, `${userId}.json`);
+
+  try {
+    const storedUser = JSON.parse(await fs.readFile(userPath, `utf8`));
+    const storedHash = Buffer.from(storedUser.sessionTokenHash || ``, `hex`);
+    const providedHash = Buffer.from(hashSessionToken(token), `hex`);
+
+    if (
+      storedHash.length !== providedHash.length ||
+      !timingSafeEqual(storedHash, providedHash) ||
+      !storedUser.sessionTokenExpiresAt ||
+      Date.parse(storedUser.sessionTokenExpiresAt) <= Date.now()
+    ) {
+      return null;
+    }
+
+    return {
+      id: userId,
+      username: storedUser.username,
+      avatar: storedUser.avatar,
+    };
+  } catch {
+    return null;
+  }
+}
+
+app.get(`/auth/verify`, async (req, res) => {
+  const user = await verifyUserToken(getBearerToken(req));
+
+  if (!user) {
+    return res.status(401).json({
+      authenticated: false,
+      message: `Invalid or expired token`,
+    });
+  }
+
+  return res.json({
+    authenticated: true,
+    user,
+  });
+});
+
+async function saveUserData(
+  refreshToken,
+  accessToken,
+  userId,
+  username,
+  avatar,
+  sessionToken,
+) {
   const userDirectory = path.join(__dirname, `..`, `db`, `usr`);
   const userPath = path.join(userDirectory, `${userId}.json`);
   const data = {
@@ -157,6 +241,8 @@ async function saveUserData(refreshToken, accessToken, userId, username, avatar,
     aToken: accessToken,
     username,
     avatar,
+    sessionTokenHash: hashSessionToken(sessionToken),
+    sessionTokenExpiresAt: new Date(Date.now() + sessionLifetime).toISOString(),
   };
 
   await fs.mkdir(userDirectory, { recursive: true });
