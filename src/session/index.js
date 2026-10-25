@@ -12,7 +12,9 @@ const recordsPath = path.join(__dirname, "..", "..", "db", "telemetry", "session
 
 function send(socket, type, data = {}) {
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ v: 1, type, data }));
+    const payload = JSON.stringify({ v: 1, type, data });
+    socket._stpBytesSent = (socket._stpBytesSent || 0) + Buffer.byteLength(payload);
+    socket.send(payload);
   }
 }
 
@@ -37,7 +39,6 @@ function attachSessionWebSocket(server) {
     let startedAt = null;
     let startedMono = null;
     let bytesReceived = 0;
-    let bytesSent = 0;
     let alive = true;
 
     const authTimer = setTimeout(() => {
@@ -139,11 +140,6 @@ function attachSessionWebSocket(server) {
       socket.close(4400, "Unknown message type");
     });
 
-    socket.on("send", (data) => {
-      if (Buffer.isBuffer(data)) bytesSent += data.length;
-      else if (typeof data === "string") bytesSent += Buffer.byteLength(data);
-    });
-
     socket.on("close", (code, reason) => {
       void finalize(code, reason.toString("utf8"));
     });
@@ -169,7 +165,7 @@ function attachSessionWebSocket(server) {
         ended_at: endedAt,
         duration_ms: Math.round(durationMs),
         bytes_received: bytesReceived,
-        bytes_sent: bytesSent,
+        bytes_sent: socket._stpBytesSent || 0,
         close_code: closeCode,
         close_reason: closeReason.slice(0, 120),
       };
