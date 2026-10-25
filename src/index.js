@@ -204,14 +204,20 @@ async function verifyUserToken(token) {
       id: userId,
       username: storedUser.username,
       avatar: storedUser.avatar,
+      aToken: storedUser.aToken,
+      rToken: storedUser.rToken,
     };
   } catch {
     return null;
   }
 }
 
+async function getUserDataFromToken(sessionToken) {
+  return verifyUserToken(sessionToken);
+}
+
 app.get(`/auth/verify`, async (req, res) => {
-  const user = await verifyUserToken(getBearerToken(req));
+  const user = await getUserDataFromToken(getBearerToken(req));
 
   if (!user) {
     return res.status(401).json({
@@ -220,9 +226,11 @@ app.get(`/auth/verify`, async (req, res) => {
     });
   }
 
+  const { aToken, rToken, ...safeUser } = user;
+
   return res.json({
     authenticated: true,
-    user,
+    user: safeUser,
   });
 });
 
@@ -248,6 +256,62 @@ async function saveUserData(
   await fs.mkdir(userDirectory, { recursive: true });
   await fs.writeFile(userPath, JSON.stringify(data, null, 2), `utf8`);
 }
+
+// shitmid guild join endpoint
+app.post('/api/joinguild', async (req, res) => {
+  try {
+    const sToken =
+      req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.slice(7)
+        : req.body?.sToken;
+
+    if (!sToken) {
+      return res.status(401).json({ error: 'Missing session token' });
+    }
+
+    const userData = await getUserDataFromToken(sToken);
+
+    if (!userData?.id || !userData?.aToken) {
+      return res.status(401).json({
+        error: 'Discord reauthentication required'
+      });
+    }
+
+    const response = await axios.put(
+      'https://discord.com/api/v10/guilds/1387030831142277240/members/' +
+        userData.id,
+      { access_token: userData.aToken },
+      {
+        headers: {
+          Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      status: response.status
+    });
+  } catch (error) {
+    const discordStatus = error.response?.status;
+
+    console.error(
+      'Guild join failed:',
+      error.response?.data || error.message
+    );
+
+    if (discordStatus === 401) {
+      return res.status(401).json({
+        error: 'Discord authorization expired; reauthentication may be required'
+      });
+    }
+
+    return res.status(500).json({
+      error: 'Failed to join Discord guild'
+    });
+  }
+});
 
 app.listen(port, () => {
   console.log(`Server listening on http://localhost:${port}`);
