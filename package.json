@@ -4,7 +4,9 @@
   "description": "rpc for when ur shitting",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test"
   },
   "repository": {
     "type": "git",
