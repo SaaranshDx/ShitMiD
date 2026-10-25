@@ -56,3 +56,13 @@ db/usr/<user-id>/<session-id>.json
 ```
 
 The session file is created when the WebSocket connects and updated when it closes with `connectedAt`, `disconnectedAt`, `durationMs`, `closeCode`, and `closeReason` fields. Session files are ignored by Git through the existing `db/` rule.
+
+## Leaderboard
+
+View the longest session for each user, with ten users per page:
+
+```text
+GET http://localhost:8000/api/leaderboard?page=1
+```
+
+The response includes `totalUsers`, `totalPages`, pagination flags, and a `users` array sorted by `durationMs` descending. Currently connected sessions use their live elapsed duration; closed sessions use their saved duration.
