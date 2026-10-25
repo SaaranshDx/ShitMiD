@@ -33,6 +33,7 @@ function attachSessionWebSocket(server) {
 
   wss.on("connection", (socket) => {
     let authenticated = false;
+    let authenticating = false;
     let finalized = false;
     let userId = null;
     let sessionId = null;
@@ -40,6 +41,8 @@ function attachSessionWebSocket(server) {
     let startedMono = null;
     let bytesReceived = 0;
     let alive = true;
+
+    send(socket, "hello", { protocol: "STP", version: 1, auth_timeout_ms: AUTH_TIMEOUT_MS });
 
     const authTimer = setTimeout(() => {
       if (!authenticated) {
@@ -90,12 +93,14 @@ function attachSessionWebSocket(server) {
       }
 
       if (!authenticated) {
+        if (authenticating) return;
         if (message.type !== "authenticate" || typeof message.data?.token !== "string") {
           send(socket, "auth_error", { code: "AUTH_REQUIRED", message: "Send an authenticate message first." });
           socket.close(4401, "Authentication required");
           return;
         }
 
+        authenticating = true;
         let user;
         try {
           user = await getUserDataFromToken(message.data.token);
@@ -109,7 +114,9 @@ function attachSessionWebSocket(server) {
           return;
         }
 
+        if (socket.readyState !== WebSocket.OPEN) return;
         authenticated = true;
+        authenticating = false;
         clearTimeout(authTimer);
         userId = user.id;
         sessionId = randomUUID();
